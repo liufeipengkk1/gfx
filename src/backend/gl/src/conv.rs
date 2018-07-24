@@ -1,4 +1,14 @@
-use gl::{self, types as t};
+use gles::es20::data_struct as es20d;
+use gles::es30::data_struct as es30d;
+use gles::es31::data_struct as es31d;
+use gles::es32::data_struct as es32d;
+
+use gles::es20;
+use gles::es31;
+use gles::es30;
+use gles::es32;
+
+use outEv::env::{GLES_VERSION};
 use hal::{buffer, image as i, Primitive};
 use hal::format::Format;
 use native::VertexAttribFunction;
@@ -18,93 +28,174 @@ pub fn _image_kind_to_gl(kind: i::Kind) -> t::GLenum {
     }
 }*/
 
-pub fn filter_to_gl(mag: i::Filter, min: i::Filter, mip: i::Filter) -> (t::GLenum, t::GLenum) {
+pub fn filter_to_gl(version:&GLES_VERSION, mag: i::Filter, min: i::Filter, mip: i::Filter) -> (es20d::GLenum, es20d::GLenum) {
     use hal::image::Filter::*;
 
     let mag_filter = match mag {
-        Nearest => gl::NEAREST,
-        Linear => gl::LINEAR,
+        Nearest => es20d::GL_NEAREST,
+        Linear => es20d::GL_LINEAR,
     };
 
     let min_filter = match (min, mip) {
-        (Nearest, Nearest) => gl::NEAREST_MIPMAP_NEAREST,
-        (Nearest, Linear) => gl::NEAREST_MIPMAP_LINEAR,
-        (Linear, Nearest) => gl::LINEAR_MIPMAP_NEAREST,
-        (Linear, Linear) => gl::LINEAR_MIPMAP_LINEAR,
+        (Nearest, Nearest) => es20d::GL_NEAREST_MIPMAP_NEAREST,
+        (Nearest, Linear) => es20d::GL_NEAREST_MIPMAP_LINEAR,
+        (Linear, Nearest) => es20d::GL_LINEAR_MIPMAP_NEAREST,
+        (Linear, Linear) => es20d::GL_LINEAR_MIPMAP_LINEAR,
     };
 
     (min_filter, mag_filter)
 }
 
-pub fn wrap_to_gl(w: i::WrapMode) -> t::GLenum {
+pub fn wrap_to_gl(version:&GLES_VERSION,w: i::WrapMode) -> es20d::GLenum {
     match w {
-        i::WrapMode::Tile   => gl::REPEAT,
-        i::WrapMode::Mirror => gl::MIRRORED_REPEAT,
-        i::WrapMode::Clamp  => gl::CLAMP_TO_EDGE,
-        i::WrapMode::Border => gl::CLAMP_TO_BORDER,
+        i::WrapMode::Tile   => es20d::GL_REPEAT,
+        i::WrapMode::Mirror => es20d::GL_MIRRORED_REPEAT,
+        i::WrapMode::Clamp  => es20d::GL_CLAMP_TO_EDGE,
+        i::WrapMode::Border => {
+            match version {
+                GLES_VERSION::ES32 => es32d::GL_CLAMP_TO_BORDER,
+                GLES_VERSION::ES30 | GLES_VERSION::ES31 | GLES_VERSION::ES20
+                =>{
+                    info!("conv:wrap_to_gl: Border is not supported by es20,\
+                    and feed GL_CLAMP_TO_EDGE instead");
+                    es20d::GL_CLAMP_TO_EDGE
+                }
+            }
+        },
     }
 }
 
-pub fn buffer_usage_to_gl_target(usage: buffer::Usage) -> Option<t::GLenum> {
+pub fn buffer_usage_to_gl_target(version: &GLES_VERSION, usage: buffer::Usage) -> Option<es20d::GLenum> {
     use self::buffer::Usage;
     match usage & (Usage::UNIFORM | Usage::INDEX | Usage::VERTEX | Usage::INDIRECT) {
-        Usage::UNIFORM => Some(gl::UNIFORM_BUFFER),
-        Usage::INDEX => Some(gl::ELEMENT_ARRAY_BUFFER),
-        Usage::VERTEX => Some(gl::ARRAY_BUFFER),
-        Usage::INDIRECT => unimplemented!(),
+        Usage::UNIFORM => {
+            match version {
+                GLES_VERSION::ES20 => {
+                    info!("conv:buffer_usage_to_gl_target: Uniform Buffer is not support by gles20");
+                    unimplemented!()
+                },
+                _ => {
+                    Some(es30d::GL_UNIFORM_BUFFER)
+                }
+            }
+        },
+        Usage::INDEX => Some(es20d::GL_ELEMENT_ARRAY_BUFFER),
+        Usage::VERTEX => Some(es20d::GL_ARRAY_BUFFER),
+        Usage::INDIRECT => {
+            info!("conv:buffer_usage_to_gl_target: INDIRECT is not support by gl");
+            unimplemented!()
+        },
         _ => None
     }
 }
 
-pub fn primitive_to_gl_primitive(primitive: Primitive) -> t::GLenum {
-    match primitive {
-        Primitive::PointList => gl::POINTS,
-        Primitive::LineList => gl::LINES,
-        Primitive::LineStrip => gl::LINE_STRIP,
-        Primitive::TriangleList => gl::TRIANGLES,
-        Primitive::TriangleStrip => gl::TRIANGLE_STRIP,
-        Primitive::LineListAdjacency => gl::LINES_ADJACENCY,
-        Primitive::LineStripAdjacency => gl::LINE_STRIP_ADJACENCY,
-        Primitive::TriangleListAdjacency => gl::TRIANGLES_ADJACENCY,
-        Primitive::TriangleStripAdjacency => gl::TRIANGLE_STRIP_ADJACENCY,
-        Primitive::PatchList(_) => gl::PATCHES,
+pub fn primitive_to_gl_primitive(version: &GLES_VERSION, primitive: Primitive) -> es20d::GLenum {
+    match version {
+        GLES_VERSION::ES20 |  GLES_VERSION::ES31 |  GLES_VERSION::ES30
+        => {
+            match primitive {
+                Primitive::PointList => es20d::GL_POINTS,
+                Primitive::LineList => es20d::GL_LINES,
+                Primitive::LineStrip => es20d::GL_LINE_STRIP,
+                Primitive::TriangleList => es20d::GL_TRIANGLES,
+                Primitive::TriangleStrip => es20d::GL_TRIANGLE_STRIP,
+                //30
+                Primitive::LineListAdjacency |
+                Primitive::LineStripAdjacency |
+                Primitive::TriangleListAdjacency |
+                Primitive::TriangleStripAdjacency |
+                Primitive::PatchList(_)  => {
+                    info!("conv: primitive_to_gl_primitive: LineListAdjacency | \
+                    LineStripAdjacency | TriangleListAdjacency | TriangleStripAdjacency| \
+                    PatchList are not supported by es20/es30/es31");
+                    unimplemented!()
+                }
+            }
+        },
+        GLES_VERSION::ES32 => {
+            match primitive {
+                Primitive::PointList => es20d::GL_POINTS,
+                Primitive::LineList => es20d::GL_LINES,
+                Primitive::LineStrip => es20d::GL_LINE_STRIP,
+                Primitive::TriangleList => es20d::GL_TRIANGLES,
+                Primitive::TriangleStrip => es20d::GL_TRIANGLE_STRIP,
+                //32 attribute
+                Primitive::LineListAdjacency => es32d::GL_LINES_ADJACENCY,
+                Primitive::LineStripAdjacency => es32d::GL_LINE_STRIP_ADJACENCY,
+                Primitive::TriangleListAdjacency => es32d::GL_TRIANGLES_ADJACENCY,
+                Primitive::TriangleStripAdjacency => es32d::GL_TRIANGLE_STRIP_ADJACENCY,
+                Primitive::PatchList(_) => es32d::GL_PATCHES,
+            }
+        }
     }
 }
 
-pub fn format_to_gl_format(format: Format) -> Option<(gl::types::GLint, gl::types::GLenum, VertexAttribFunction)> {
+pub fn format_to_gl_format(version: &GLES_VERSION, format: Format) -> Option<(es20d::GLint, es20d::GLenum, VertexAttribFunction)> {
     use hal::format::Format::*;
-    use gl::*;
     use native::VertexAttribFunction::*;
     let _ = Double; //mark as used
     // TODO: Add more formats and error handling for `None`
     let format = match format {
-        R8Uint => (1, UNSIGNED_BYTE, Integer),
-        R8Int => (1, BYTE, Integer),
-        Rg8Uint => (2, UNSIGNED_BYTE, Integer),
-        Rg8Int => (2, BYTE, Integer),
-        Rgba8Uint => (4, UNSIGNED_BYTE, Integer),
-        Rgba8Int => (4, BYTE, Integer),
-        R16Uint => (1, UNSIGNED_SHORT, Integer),
-        R16Int => (1, SHORT, Integer),
-        R16Float => (1, HALF_FLOAT, Float),
-        Rg16Uint => (2, UNSIGNED_SHORT, Integer),
-        Rg16Int => (2, SHORT, Integer),
-        Rg16Float => (2, HALF_FLOAT, Float),
-        Rgba16Uint => (4, UNSIGNED_SHORT, Integer),
-        Rgba16Int => (4, SHORT, Integer),
-        Rgba16Float => (4, HALF_FLOAT, Float),
-        R32Uint => (1, UNSIGNED_INT, Integer),
-        R32Int => (1, INT, Integer),
-        R32Float => (1, FLOAT, Float),
-        Rg32Uint => (2, UNSIGNED_INT, Integer),
-        Rg32Int => (2, INT, Integer),
-        Rg32Float => (2, FLOAT, Float),
-        Rgb32Uint => (3, UNSIGNED_INT, Integer),
-        Rgb32Int => (3, INT, Integer),
-        Rgb32Float => (3, FLOAT, Float),
-        Rgba32Uint => (4, UNSIGNED_INT, Integer),
-        Rgba32Int => (4, INT, Integer),
-        Rgba32Float => (4, FLOAT, Float),
+        R8Uint => (1, es20d::GL_UNSIGNED_BYTE, Integer),
+        R8Int => (1, es20d::GL_BYTE, Integer),
+        Rg8Uint => (2, es20d::GL_UNSIGNED_BYTE, Integer),
+        Rg8Int => (2, es20d::GL_BYTE, Integer),
+        Rgba8Uint => (4, es20d::GL_UNSIGNED_BYTE, Integer),
+        Rgba8Int => (4, es20d::GL_BYTE, Integer),
+        R16Uint => (1, es20d::GL_UNSIGNED_SHORT, Integer),
+        R16Int => (1, es20d::GL_SHORT, Integer),
+        //
+        R16Float => {
+            match version {
+                GLES_VERSION::ES20=>{
+
+                },
+                _ => {
+                    (1, es30d::GL_HALF_FLOAT, Float)
+                }
+            }
+        },
+        Rg16Uint => (2, es20d::GL_UNSIGNED_SHORT, Integer),
+        Rg16Int => (2, es20d::GL_SHORT, Integer),
+        //
+        Rg16Float => {
+            match version {
+                GLES_VERSION::ES20 => {
+                    info!("conv: format_to_gl_format: half float is not supported by es20");
+                    unimplemented!()
+                },
+                _ => {
+                    (2, es30d::GL_HALF_FLOAT, Float)
+                }
+            }
+        },
+        Rgba16Uint => (4, es20d::GL_UNSIGNED_SHORT, Integer),
+        Rgba16Int => (4, es20d::GL_SHORT, Integer),
+
+        Rgba16Float => {
+            match version {
+                GLES_VERSION::ES20 => {
+                    info!("conv: format_to_gl_format: half float is not supported by es20");
+                    unimplemented!()
+                },
+                _ => {
+                    (4, es30d::GL_HALF_FLOAT, Float)
+                }
+            }
+        },
+
+        R32Uint => (1, es20d::GL_UNSIGNED_INT, Integer),
+        R32Int => (1, es20d::GL_INT, Integer),
+        R32Float => (1, es20d::GL_FLOAT, Float),
+        Rg32Uint => (2, es20d::GL_UNSIGNED_INT, Integer),
+        Rg32Int => (2, es20d::GL_INT, Integer),
+        Rg32Float => (2, es20d::GL_FLOAT, Float),
+        Rgb32Uint => (3, es20d::GL_UNSIGNED_INT, Integer),
+        Rgb32Int => (3, es20d::GL_INT, Integer),
+        Rgb32Float => (3, es20d::GL_FLOAT, Float),
+        Rgba32Uint => (4, es20d::GL_UNSIGNED_INT, Integer),
+        Rgba32Int => (4, es20d::GL_INT, Integer),
+        Rgba32Float => (4, es20d::GL_FLOAT, Float),
 
         _ => return None,
     };

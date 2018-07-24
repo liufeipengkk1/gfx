@@ -5,7 +5,18 @@ use Starc;
 use hal;
 use hal::error;
 
-use gl;
+use gles::es20::data_struct as es20d;
+use gles::es30::data_struct as es30d;
+use gles::es31::data_struct as es31d;
+use gles::es32::data_struct as es32d;
+
+use gles::es20;
+use gles::es31;
+use gles::es30;
+use gles::es32;
+
+use outEv::env::{GLES_VERSION};
+
 use smallvec::SmallVec;
 
 use {command as com, native, state, window};
@@ -27,7 +38,7 @@ struct State {
     vao: bool,
     // Currently bound index/element buffer.
     // None denotes that we don't know what is currently bound.
-    index_buffer: Option<gl::types::GLuint>,
+    index_buffer: Option<es20d::GLuint>,
     // Currently set viewports.
     num_viewports: usize,
     // Currently set scissor rects.
@@ -78,9 +89,9 @@ impl CommandQueue {
     ///
     /// > Note: Calling this function can have a noticeable impact on the performance
     ///         because the internal state cache will flushed.
-    pub unsafe fn with_gl<F: FnMut(&gl::Gl)>(&mut self, mut fun: F) {
+    pub unsafe fn with_gl<F: FnMut(&GLES_VERSION)>(&mut self, mut fun: F) {
         self.reset_state();
-        fun(&self.share.context);
+        fun(&self.share.gl_version);
         // Flush the state to enforce a reset once a new command buffer
         // is execute because we have no control of the called functions.
         self.state.flush();
@@ -151,27 +162,56 @@ impl CommandQueue {
     }
     */
 
-    fn bind_target(&mut self, point: gl::types::GLenum, attachment: gl::types::GLenum, view: &native::ImageView) {
-        let gl = &self.share.context;
+    fn bind_target(&mut self, point: es20d::GLenum, attachment: es20d::GLenum, view: &native::ImageView) {
+        let version = &self.share.gl_version;
         match view {
-            &native::ImageView::Surface(surface) => unsafe {
-                gl.FramebufferRenderbuffer(point, attachment, gl::RENDERBUFFER, surface);
+            &native::ImageView::Surface(surface) =>  {
+                es20::wrapper::framebuffer_renderbuffer(point, attachment,
+                                                        es20d::GL_RENDERBUFFER,
+                                                        surface);
             },
-            &native::ImageView::Texture(texture, level) => unsafe {
-                gl.FramebufferTexture(point, attachment, texture,
-                                      level as gl::types::GLint);
+            &native::ImageView::Texture(texture, level) =>  {
+                match version {
+                    GLES_VERSION::ES20 | GLES_VERSION::ES30 | GLES_VERSION::ES31 => {
+                        es20::wrapper::framebuffer_texture_2d(point, attachment,
+                                                              es20d::GL_TEXTURE_2D,
+                                                              texture, level as es20d::GLint);
+                    },
+                    _ => unsafe {
+                        es32::ffi::glFramebufferTexture(point, attachment, texture,
+                        level as es20d::GLint);
+                    }
+                }
             },
-            &native::ImageView::TextureLayer(texture, level, layer) => unsafe {
-                gl.FramebufferTextureLayer(point, attachment, texture,
-                                           level as gl::types::GLint,
-                                           layer as gl::types::GLint);
+            &native::ImageView::TextureLayer(texture, level, layer) => {
+                match version {
+                    GLES_VERSION::ES20 => {
+                        info!("queue: bind_target: es20 don't support TextureLayer");
+                        unimplemented!();
+                    },
+                    _ => {
+                        unsafe {
+                            es30::ffi::glFramebufferTextureLayer(point, attachment, texture,
+                                                                 level as es20d::GLint,
+                                                                 layer as es20d::GLint);
+                        }
+                    }
+                }
             },
         }
     }
 
-    fn _unbind_target(&mut self, point: gl::types::GLenum, attachment: gl::types::GLenum) {
-        let gl = &self.share.context;
-        unsafe { gl.FramebufferTexture(point, attachment, 0, 0) };
+    fn _unbind_target(&mut self, point: es20d::GLenum, attachment: es20d::GLenum) {
+        let version = &self.share.gl_version;
+        match version {
+            GLES_VERSION::ES30 | GLES_VERSION::ES31 | GLES_VERSION::ES20 => {
+                es20::wrapper::framebuffer_texture_2d(point, attachment,
+                es20d::GL_TEXTURE_2D, 0, 0);
+            },
+            _ => unsafe {
+                es32::ffi::glFramebufferTexture(point, attachment, 0, 0);
+            }
+        }
     }
 
     /// Return a reference to a stored data object.
@@ -196,13 +236,15 @@ impl CommandQueue {
     // Reset the state to match our _expected_ state before executing
     // a command buffer.
     fn reset_state(&mut self) {
-        let gl = &self.share.context;
+        let version = &self.share.gl_version;
         let priv_caps = &self.share.private_caps;
 
         // Bind default VAO
         if !self.state.vao {
             if priv_caps.vertex_array {
-                unsafe { gl.BindVertexArray(self.vao) };
+                unsafe {
+                    es30::ffi::glBindVertexArray(self.vao);
+                };
             }
             self.state.vao = true
         }

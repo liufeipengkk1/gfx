@@ -7,12 +7,20 @@
 extern crate bitflags;
 #[macro_use]
 extern crate log;
-extern crate gfx_gl as gl;
 extern crate gfx_hal as hal;
 extern crate smallvec;
 extern crate spirv_cross;
-#[cfg(feature = "glutin")]
-pub extern crate glutin;
+extern crate opengles_rs as gles;
+
+use gles::es20::data_struct as es20d;
+use gles::es30::data_struct as es30d;
+use gles::es31::data_struct as es31d;
+use gles::es32::data_struct as es32d;
+
+use gles::es20;
+use gles::es31;
+use gles::es30;
+use gles::es32;
 
 use std::cell::Cell;
 use std::fmt;
@@ -35,9 +43,13 @@ mod pool;
 mod queue;
 mod state;
 mod window;
+mod outEv;
 
-#[cfg(feature = "glutin")]
-pub use window::glutin::{config_context, Headless, Surface, Swapchain};
+//#[cfg(feature = "glutin")]
+//pub use window::glutin::{config_context, Headless, Surface, Swapchain};
+
+
+pub use outEv::env::{Swapchain, Surface, GLES_VERSION};
 
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
 pub enum Backend {}
@@ -91,14 +103,14 @@ pub enum Error {
 }
 
 impl Error {
-    pub fn from_error_code(error_code: gl::types::GLenum) -> Error {
+    pub fn from_error_code(error_code: es20d::GLenum) -> Error {
         match error_code {
-            gl::NO_ERROR                      => Error::NoError,
-            gl::INVALID_ENUM                  => Error::InvalidEnum,
-            gl::INVALID_VALUE                 => Error::InvalidValue,
-            gl::INVALID_OPERATION             => Error::InvalidOperation,
-            gl::INVALID_FRAMEBUFFER_OPERATION => Error::InvalidFramebufferOperation,
-            gl::OUT_OF_MEMORY                 => Error::OutOfMemory,
+            es20d::GL_NO_ERROR                      => Error::NoError,
+            es20d::GL_INVALID_ENUM                  => Error::InvalidEnum,
+            es20d::GL_INVALID_VALUE                 => Error::InvalidValue,
+            es20d::GL_INVALID_OPERATION             => Error::InvalidOperation,
+            es20d::GL_INVALID_FRAMEBUFFER_OPERATION => Error::InvalidFramebufferOperation,
+            es20d::GL_OUT_OF_MEMORY                 => Error::OutOfMemory,
             _                                 => Error::UnknownError,
         }
     }
@@ -106,7 +118,7 @@ impl Error {
 
 /// Internal struct of shared data between the physical and logical device.
 struct Share {
-    context: gl::Gl,
+    gl_version: outEv::env::GLES_VERSION,
     info: Info,
     features: hal::Features,
     legacy_features: info::LegacyFeatures,
@@ -120,8 +132,8 @@ impl Share {
     /// Fails during a debug build if the implementation's error flag was set.
     fn check(&self) -> Result<(), Error> {
         if cfg!(debug_assertions) {
-            let gl = &self.context;
-            let err = Error::from_error_code(unsafe { gl.GetError() });
+            let code = es20::wrapper::get_error();
+            let err = Error::from_error_code(code);
             if err != Error::NoError {
                 return Err(err)
             }
@@ -148,9 +160,9 @@ impl<T: ?Sized> Clone for Starc<T> {
 }
 
 impl<T: ?Sized> fmt::Debug for Starc<T> {
-     fn fmt(&self, fmt: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-         write!(fmt, "{:p}@{:?}", self.arc, self.thread)
-     }
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(fmt, "{:p}@{:?}", self.arc, self.thread)
+    }
 }
 
 impl<T> Starc<T> {
@@ -177,12 +189,10 @@ impl<T: ?Sized> Deref for Starc<T> {
 pub struct PhysicalDevice(Starc<Share>);
 
 impl PhysicalDevice {
-    fn new_adapter<F>(fn_proc: F) -> hal::Adapter<Backend>
-    where F: FnMut(&str) -> *const std::os::raw::c_void
+    fn new_adapter(version: &GLES_VERSION) -> hal::Adapter<Backend>
     {
-        let gl = gl::Gl::load_with(fn_proc);
         // query information
-        let (info, features, legacy_features, limits, private_caps) = info::query_all(&gl);
+        let (info, features, legacy_features, limits, private_caps) = info::query_all(version);
         info!("Vendor: {:?}", info.platform_name.vendor);
         info!("Renderer: {:?}", info.platform_name.renderer);
         info!("Version: {:?}", info.version);
@@ -197,7 +207,7 @@ impl PhysicalDevice {
 
         // create the shared context
         let share = Share {
-            context: gl,
+            gl_version: version.clone(),
             info,
             features,
             legacy_features,
@@ -227,6 +237,7 @@ impl PhysicalDevice {
     }
 }
 
+//这里的physicalDevice只是一个share，相当于上下文
 impl hal::PhysicalDevice<Backend> for PhysicalDevice {
     fn open(
         &self, families: &[(&QueueFamily, &[hal::QueuePriority])],
@@ -239,26 +250,27 @@ impl hal::PhysicalDevice<Backend> for PhysicalDevice {
         self.0.open.set(true);
 
         // initialize permanent states
-        let gl = &self.0.context;
-        if self.0.legacy_features.contains(info::LegacyFeatures::SRGB_COLOR) {
-            unsafe {
-                gl.Enable(gl::FRAMEBUFFER_SRGB);
-            }
-        }
-        unsafe {
-            gl.PixelStorei(gl::UNPACK_ALIGNMENT, 1);
+        //let gl = &self.0.context;
+        /* if self.0.legacy_features.contains(info::LegacyFeatures::SRGB_COLOR) {
+             unsafe {
+                 gl.Enable(gl::FRAMEBUFFER_SRGB);
+             }
+         }
+         */
+        //unsafe {
+        es20::wrapper::pixel_storei(es20d::UNPACK_ALIGNMENT, 1);
 
-            if !self.0.info.version.is_embedded {
-                gl.Enable(gl::PROGRAM_POINT_SIZE);
-            }
-        }
+        // if !self.0.info.version.is_embedded {
+        //     es20::wrapper::enable(gl::PROGRAM_POINT_SIZE);
+        // }
+        // }
 
         // create main VAO and bind it
         let mut vao = 0;
         if self.0.private_caps.vertex_array {
             unsafe {
-                gl.GenVertexArrays(1, &mut vao);
-                gl.BindVertexArray(vao);
+                es30::ffi::glGenVertexArrays(1, &mut vao);
+                es30::ffi::glBindVertexArray(vao);
             }
         }
 
