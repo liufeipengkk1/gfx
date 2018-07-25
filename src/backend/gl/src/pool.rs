@@ -6,6 +6,8 @@ use Backend;
 
 use std::sync::{Arc, Mutex};
 
+use outEv::env::GLES_VERSION;
+
 
 pub struct OwnedBuffer {
     pub(crate) commands: Vec<Command>,
@@ -54,6 +56,7 @@ pub enum BufferMemory {
 
 
 pub struct RawCommandPool {
+    pub(crate) gl_version: GLES_VERSION,
     pub(crate) fbo: n::FrameBuffer,
     pub(crate) limits: command::Limits,
     pub(crate) memory: Arc<Mutex<BufferMemory>>,
@@ -83,6 +86,7 @@ impl pool::RawCommandPool<Backend> for RawCommandPool {
     ) -> Vec<RawCommandBuffer> { // TODO: Implement secondary buffers
         (0..num).map(|_|
                 RawCommandBuffer::new(
+                    &self.gl_version,
                     self.fbo,
                     self.limits,
                     self.memory.clone()))

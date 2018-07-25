@@ -1,6 +1,16 @@
 #![allow(missing_docs)]
 
-use gl;
+use gles::es20::data_struct as es20d;
+use gles::es30::data_struct as es30d;
+use gles::es31::data_struct as es31d;
+use gles::es32::data_struct as es32d;
+
+use gles::es20;
+use gles::es31;
+use gles::es30;
+use gles::es32;
+
+use outEv::env::GLES_VERSION;
 
 use hal::{self, buffer, command, image, memory, pass, pso, query, ColorSlot};
 use hal::format::ChannelType;
@@ -56,21 +66,21 @@ impl BufferSlice {
 #[derive(Clone, Debug)]
 pub enum Command {
     Dispatch(hal::WorkGroupCount),
-    DispatchIndirect(gl::types::GLuint, buffer::Offset),
+    DispatchIndirect(es20d::GLuint, buffer::Offset),
     Draw {
-        primitive: gl::types::GLenum,
+        primitive: es20d::GLenum,
         vertices: Range<hal::VertexCount>,
         instances: Range<hal::InstanceCount>,
     },
     DrawIndexed {
-        primitive: gl::types::GLenum,
-        index_type: gl::types::GLenum,
+        primitive: es20d::GLenum,
+        index_type: es20d::GLenum,
         index_count: hal::IndexCount,
         index_buffer_offset: buffer::Offset,
         base_vertex: hal::VertexOffset,
         instances: Range<hal::InstanceCount>,
     },
-    BindIndexBuffer(gl::types::GLuint),
+    BindIndexBuffer(es20d::GLuint),
     //BindVertexBuffers(BufferSlice),
     SetViewports {
         first_viewport: u32,
@@ -96,10 +106,10 @@ pub enum Command {
     BindFrameBuffer(FrameBufferTarget, n::FrameBuffer),
     BindTargetView(FrameBufferTarget, AttachmentPoint, n::ImageView),
     SetDrawColorBuffers(usize),
-    SetPatchSize(gl::types::GLint),
-    BindProgram(gl::types::GLuint),
+    SetPatchSize(es20d::GLint),
+    BindProgram(es20d::GLuint),
     BindBlendSlot(ColorSlot, pso::ColorBlendDesc),
-    BindAttribute(n::AttributeDesc, gl::types::GLuint, gl::types::GLsizei, n::VertexAttribFunction),
+    BindAttribute(n::AttributeDesc, es20d::GLuint, es20d::GLsizei, n::VertexAttribFunction),
     //UnbindAttribute(n::AttributeDesc),
     CopyBufferToBuffer(n::RawBuffer, n::RawBuffer, command::BufferCopy),
     CopyBufferToTexture(n::RawBuffer, n::Texture, command::BufferImageCopy),
@@ -109,14 +119,14 @@ pub enum Command {
     CopyImageToTexture(n::ImageKind, n::Texture, command::ImageCopy),
     CopyImageToSurface(n::ImageKind, n::Surface, command::ImageCopy),
 
-    BindBufferRange(gl::types::GLenum, gl::types::GLuint, n::RawBuffer, gl::types::GLintptr, gl::types::GLsizeiptr),
-    BindTexture(gl::types::GLenum, n::Texture),
-    BindSampler(gl::types::GLuint, n::Texture),
+    BindBufferRange(es20d::GLenum, es20d::GLuint, n::RawBuffer, es20d::GLintptr, es20d::GLsizeiptr),
+    BindTexture(es20d::GLenum, n::Texture),
+    BindSampler(es20d::GLuint, n::Texture),
 }
 
-pub type FrameBufferTarget = gl::types::GLenum;
-pub type AttachmentPoint = gl::types::GLenum;
-pub type DrawBuffer = gl::types::GLint;
+pub type FrameBufferTarget = es20d::GLenum;
+pub type AttachmentPoint = es20d::GLenum;
+pub type DrawBuffer = es20d::GLint;
 
 #[derive(Clone)]
 struct AttachmentClear {
@@ -136,7 +146,7 @@ pub struct RenderPassCache {
 #[derive(Clone)]
 struct Cache {
     // Active primitive topology, set by the current pipeline.
-    primitive: Option<gl::types::GLenum>,
+    primitive: Option<es20d::GLenum>,
     // Active index type, set by the current index buffer.
     index_type: Option<hal::IndexType>,
     // Stencil reference values (front, back).
@@ -149,13 +159,13 @@ struct Cache {
     // Indicates that invalid commands have been recorded.
     error_state: bool,
     // Vertices per patch for tessellation primitives (patches).
-    patch_size: Option<gl::types::GLint>,
+    patch_size: Option<es20d::GLint>,
     // Active program name.
-    program: Option<gl::types::GLuint>,
+    program: Option<es20d::GLuint>,
     // Blend per attachment.
     blend_targets: Option<Vec<Option<pso::ColorBlendDesc>>>,
     // Maps bound vertex buffer offset (index) to handle.
-    vertex_buffers: Vec<gl::types::GLuint>,
+    vertex_buffers: Vec<es20d::GLuint>,
     // Active vertex buffer descriptions.
     vertex_buffer_descs: Vec<Option<pso::VertexBufferDesc>>,
     // Active attributes.
@@ -202,6 +212,7 @@ impl From<hal::Limits> for Limits {
 /// `display_fb` field.
 #[derive(Clone)]
 pub struct RawCommandBuffer {
+    pub(crate) gl_version: GLES_VERSION,
     pub(crate) memory: Arc<Mutex<BufferMemory>>,
     pub(crate) buf: BufferSlice,
     // Buffer id for the owning command pool.
@@ -231,6 +242,7 @@ pub struct RawCommandBuffer {
 
 impl RawCommandBuffer {
     pub(crate) fn new(
+        version :&GLES_VERSION,
         fbo: n::FrameBuffer,
         limits: Limits,
         memory: Arc<Mutex<BufferMemory>>,
@@ -253,6 +265,7 @@ impl RawCommandBuffer {
         };
 
         RawCommandBuffer {
+            gl_version: version.clone(),
             memory,
             buf: BufferSlice::new(),
             id,
@@ -406,7 +419,7 @@ impl RawCommandBuffer {
                 subpass
                     .color_attachments
                     .iter()
-                    .map(|id| gl::COLOR_ATTACHMENT0 + *id as gl::types::GLenum)
+                    .map(|id| gl::COLOR_ATTACHMENT0 + *id as es20d::GLenum)
                     .collect::<Vec<_>>()
             };
 
@@ -890,7 +903,10 @@ impl command::RawCommandBuffer<Backend> for RawCommandBuffer {
                 match new_binding {
                     n::DescSetBindings::Buffer {ty: btype, binding, buffer, offset, size} => {
                         let btype = match btype {
-                            n::BindingTypes::UniformBuffers => gl::UNIFORM_BUFFER,
+                            n::BindingTypes::UniformBuffers =>{
+
+                                gl::UNIFORM_BUFFER
+                            },
                             n::BindingTypes::Images => panic!("Wrong desc set binding"),
                         };
                         for binding in drd.get_binding(n::BindingTypes::UniformBuffers, set, *binding).unwrap() {

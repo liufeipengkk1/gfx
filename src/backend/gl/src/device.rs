@@ -440,6 +440,7 @@ impl d::Device<B> for Device {
         // Ignoring `TRANSIENT` hint, unsure how to make use of this.
 
         RawCommandPool {
+            gl_version: self.share.gl_version.clone(),
             fbo,
             limits,
             memory: Arc::new(Mutex::new(memory)),

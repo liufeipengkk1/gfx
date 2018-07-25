@@ -5,17 +5,26 @@ use hal::{format, image as i, pass, pso};
 use hal::memory::Properties;
 use hal::backend::FastHashMap;
 
-use gl;
+use gles::es20::data_struct as es20d;
+use gles::es30::data_struct as es30d;
+use gles::es31::data_struct as es31d;
+use gles::es32::data_struct as es32d;
+
+use gles::es20;
+use gles::es31;
+use gles::es30;
+use gles::es32;
+
 use Backend;
 use std::borrow::Borrow;
 
-pub type RawBuffer   = gl::types::GLuint;
-pub type Shader      = gl::types::GLuint;
-pub type Program     = gl::types::GLuint;
-pub type FrameBuffer = gl::types::GLuint;
-pub type Surface     = gl::types::GLuint;
-pub type Texture     = gl::types::GLuint;
-pub type Sampler     = gl::types::GLuint;
+pub type RawBuffer   = es20d::GLuint;
+pub type Shader      = es20d::GLuint;
+pub type Program     = es20d::GLuint;
+pub type FrameBuffer = es20d::GLuint;
+pub type Surface     = es20d::GLuint;
+pub type Texture     = es20d::GLuint;
+pub type Sampler     = es20d::GLuint;
 
 pub type DescriptorSetLayout = Vec<pso::DescriptorSetLayoutBinding>;
 
