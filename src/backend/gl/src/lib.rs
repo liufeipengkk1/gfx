@@ -267,6 +267,7 @@ impl hal::PhysicalDevice<Backend> for PhysicalDevice {
 
         // create main VAO and bind it
         let mut vao = 0;
+        //feiper: private_caps from info query.
         if self.0.private_caps.vertex_array {
             unsafe {
                 es30::ffi::glGenVertexArrays(1, &mut vao);

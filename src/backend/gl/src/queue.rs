@@ -19,11 +19,11 @@ use outEv::env::{GLES_VERSION};
 
 use smallvec::SmallVec;
 
-use {command as com, native, state, window};
+use {command as com, native, state, outEv};
 use info::LegacyFeatures;
 use {Backend, Share};
 
-pub type ArrayBuffer = gl::types::GLuint;
+pub type ArrayBuffer = es20d::GLuint;
 
 // State caching system for command queue.
 //
@@ -678,11 +678,12 @@ impl CommandQueue {
                 match version {
                     ///feiper: es20 don't support buffer upload/down stream
                     GLES_VERSION::ES20 => {
-                        panic!("queue: process: gles don't support CopyBufferToBuffer type, \
+                        panic!("queue: process: gles20 don't support CopyBufferToBuffer type, \
                                 please check info.queue_all() func")
                     },
                     GLES_VERSION::ES30 | GLES_VERSION::ES31 | GLES_VERSION::ES32 => unsafe {
                         es20::wrapper::bind_buffer(es30d::GL_PIXEL_UNPACK_BUFFER, src);
+                        //buffer is packed . the memory exist in GPU
                         es20::wrapper::bind_buffer(es30d::GL_PIXEL_PACK_BUFFER, dst);
 
                         es30::ffi::glCopyBufferSubData(
@@ -703,46 +704,42 @@ impl CommandQueue {
                 match version {
                     ///feiper: es20 don't support buffer upload/down stream
                     GLES_VERSION::ES20 => {
-                        panic!("queue: process: gles don't support CopyBufferToBuffer type, \
+                        panic!("queue: process: gles20 don't support CopyBufferToBuffer Op, \
                                 please check info.queue_all() func")
                     },
                     GLES_VERSION::ES30 | GLES_VERSION::ES31 | GLES_VERSION::ES32 => unsafe {
-                        es20::wrapper::bind_buffer(es30d::GL_PIXEL_UNPACK_BUFFER, src);
-                        es20::wrapper::bind_buffer(es30d::GL_PIXEL_PACK_BUFFER, dst);
 
-                        es30::ffi::glCopyBufferSubData(
-                            es30d::GL_PIXEL_UNPACK_BUFFER,
-                            es30d::PIXEL_PACK_BUFFER,
-                            r.src as _,
-                            r.dst as _,
-                            r.size as _);
+                        /// feiper: what's the purpose for activing a texture unit
+                        es20::wrapper::active_texture(es20d::GL_TEXTURE0);
+                        es20::wrapper::bind_buffer(es30d::GL_PIXEL_UNPACK_BUFFER, buffer);
+                        es20::wrapper::bind_texture(es20d::GL_TEXTURE_2D, texture);
+                        //pbo to image .. the image data exist in CPU Memory.
+                        es20::wrapper::tex_sub_image_2d(
+                            es20d::GL_TEXTURE_2D,
+                            r.image_layers.level as _,
+                            r.image_offset.x, r.image_offset.y,
+                            r.image_extent.width as _, r.image_extent.height as _,
+                            es20d::GL_RGBA, s20d::GL_UNSIGNED_BYTE, ptr::null()
+                        );
 
                         es20::wrapper::bind_buffer(es30d::GL_PIXEL_UNPACK_BUFFER, 0);
-                        es20::wrapper::bind_buffer(es30d::GL_PIXEL_PACK_BUFFER, 0);
                     }
                 }
-
-
-                gl.ActiveTexture(gl::TEXTURE0);
-                gl.BindBuffer(gl::PIXEL_UNPACK_BUFFER, buffer);
-                gl.BindTexture(gl::TEXTURE_2D, texture);
-                gl.TexSubImage2D(
-                    gl::TEXTURE_2D, r.image_layers.level as _,
-                    r.image_offset.x, r.image_offset.y,
-                    r.image_extent.width as _, r.image_extent.height as _,
-                    gl::RGBA, gl::UNSIGNED_BYTE, ptr::null(),
-                );
-                gl.BindBuffer(gl::PIXEL_UNPACK_BUFFER, 0);
             }
             com::Command::CopyBufferToSurface(..) => {
+                panic!("queue: process: gles don't support copy buffer to render buffer, \
+                                please check info.queue_all() func");
                 unimplemented!() //TODO: use FBO
             }
             com::Command::CopyTextureToBuffer(texture, buffer, ref r) => unsafe {
                 // TODO: Fix format and active texture
                 // TODO: handle partial copies gracefully
+                panic!("queue: process: gles don't support copy tex to buffer operation, \
+                                please check info.queue_all() func");
+
                 assert_eq!(r.image_offset, hal::image::Offset { x: 0, y: 0, z: 0 });
-                let gl = &self.share.context;
-                gl.ActiveTexture(gl::TEXTURE0);
+
+                /*gl.ActiveTexture(gl::TEXTURE0);
                 gl.BindBuffer(gl::PIXEL_PACK_BUFFER, buffer);
                 gl.BindTexture(gl::TEXTURE_2D, texture);
                 gl.GetTexImage(
@@ -752,28 +749,48 @@ impl CommandQueue {
                     gl::RGBA, gl::UNSIGNED_BYTE, ptr::null_mut(),
                 );
                 gl.BindBuffer(gl::PIXEL_PACK_BUFFER, 0);
+                */
             }
             com::Command::CopySurfaceToBuffer(..) => {
+                panic!("queue: process: gles don't support CopySurfaceToBuffer, \
+                                please check info.queue_all() func");
                 unimplemented!() //TODO: use FBO
             }
             com::Command::CopyImageToTexture(..) => {
+                panic!("queue: process: gles don't support CopyImageToTexture, \
+                                please check info.queue_all() func");
                 unimplemented!() //TODO: use FBO
             }
             com::Command::CopyImageToSurface(..) => {
+                panic!("queue: process: gles don't support CopyImageToSurface, \
+                                please check info.queue_all() func");
                 unimplemented!() //TODO: use FBO
             }
-            com::Command::BindBufferRange(target, index, buffer, offset, size) => unsafe {
-                let gl = &self.share.context;
-                gl.BindBufferRange(target, index, buffer, offset, size);
+            com::Command::BindBufferRange(target, index, buffer, offset, size) => {
+                match version {
+                    GLES_VERSION::ES20 => {
+                        panic!("queue: process: gles20 don't support BindBufferRange, \
+                                please check info.queue_all() func");
+                    },
+                    _ => unsafe {
+                        es30::ffi::glBindBufferRange(target, index, buffer, offest,size);
+                    }
+                }
             }
             com::Command::BindTexture(index, texture) => unsafe {
-                let gl = &self.share.context;
-                gl.ActiveTexture(gl::TEXTURE0 + index);
-                gl.BindTexture(gl::TEXTURE_2D, texture);
+                es20::wrapper::active_texture(es20d::GL_TEXTURE0 + index);
+                es20::wrapper::bind_texture(gl::TEXTURE_2D, texture);
             }
             com::Command::BindSampler(index, sampler) => unsafe {
-                let gl = &self.share.context;
-                gl.BindSampler(index, sampler);
+                match version {
+                    GLES_VERSION::ES20 => {
+                        panic!("queue: process: gles20 don't support BindSampler, \
+                                please check info.queue_all() func");
+                    },
+                    _ => unsafe {
+                        es30::ffi::glBindSampler(index, sampler);
+                    }
+                }
             }
             /*
             com::Command::BindConstantBuffer(pso::ConstantBufferParam(buffer, _, slot)) => unsafe {
@@ -882,13 +899,19 @@ impl CommandQueue {
             panic!("Error {:?} executing command: {:?}", err, cmd)
         }
     }
+
     fn signal_fence(&mut self, fence: &native::Fence) {
         if self.share.private_caps.sync {
-            let gl = &self.share.context;
-            let sync = unsafe {
-                gl.FenceSync(gl::SYNC_GPU_COMMANDS_COMPLETE, 0)
-            };
 
+            let sync = match version {
+                GLES_VERSION::ES20 => {
+                    panic!("queue: process: gles20 don't support SynFence, \
+                                please check info.queue_all() func")
+                },
+                _ => unsafe {
+                    es30::ffi::glFenceSync(es30d::GL_SYNC_GPU_COMMANDS_COMPLETE, 0)
+                }
+            };
             fence.0.set(sync);
         }
     }
@@ -934,25 +957,25 @@ impl hal::queue::RawCommandQueue<Backend> for CommandQueue {
     fn present<IS, S, IW>(&mut self, swapchains: IS, _wait_semaphores: IW) -> Result<(), ()>
     where
         IS: IntoIterator<Item = (S, hal::SwapImageIndex)>,
-        S: Borrow<window::glutin::Swapchain>,
+        S: Borrow<outEv::env::Swapchain>,
         IW: IntoIterator,
         IW::Item: Borrow<native::Semaphore>,
     {
-        use glutin::GlContext;
 
-        for swapchain in swapchains {
-            swapchain.0
-                .borrow()
-                .window
-                .swap_buffers()
-                .unwrap();
-        }
-
+        //for swapchain in swapchains {
+        //    swapchain.0
+        //        .borrow()
+        //        .window
+        //        .swap_buffers()
+        //        .unwrap();
+        //}
+        /// outEnv do nothing when presenting, because the present buffer is determined outside .
         Ok(())
     }
 
     fn wait_idle(&self) -> Result<(), error::HostExecutionError> {
-        unsafe { self.share.context.Finish(); }
+        //unsafe { self.share.context.Finish(); }
+        es20::wrapper::finish();
         Ok(())
     }
 }

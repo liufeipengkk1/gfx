@@ -36,7 +36,7 @@ impl Clone for Env {
 // hal constraint Swapchain class
 #[derive(Copy, Debug, Clone)]
 pub struct Swapchain{
-    env : Starc<Env>,
+    pub env : Starc<Env>,
 }
 
 impl Clone for Swapchain {
@@ -53,7 +53,7 @@ impl Swapchain<B> for Swapchain {
 
 //hal constraint Surface class
 pub struct Surface {
-    env: Starc<Env>,
+    pub env: Starc<Env>,
 }
 
 impl Surface{
