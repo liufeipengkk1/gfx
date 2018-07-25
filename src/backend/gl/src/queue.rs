@@ -251,23 +251,38 @@ impl CommandQueue {
 
         // Reset indirect draw buffer
         if self.share.legacy_features.contains(LegacyFeatures::INDIRECT_EXECUTION) {
-            unsafe { gl.BindBuffer(gl::DRAW_INDIRECT_BUFFER, 0) };
+            // indirect buffer
+            match  version {
+                GLES_VERSION::ES31 |  GLES_VERSION::ES32 => unsafe {
+                    es20::wrapper::bind_buffer(es31d::GL_DRAW_INDIRECT_BUFFER, 0);
+                },
+                GLES_VERSION::ES20 |  GLES_VERSION::ES30 => {
+                    panic!("queue: reset_state: gles20/30 don't support IndirectBuffer, please check info.queue_all() \
+                    func");
+                    unimplemented!()
+                }
+            }
         }
 
         // Unbind index buffers
         match self.state.index_buffer {
             Some(0) => (), // Nothing to do
             Some(_) | None => {
-                unsafe { gl.BindBuffer(gl::ELEMENT_ARRAY_BUFFER, 0) };
+                es20::wrapper::bind_buffer(es20d::GL_ELEMENT_ARRAY_BUFFER, 0);
                 self.state.index_buffer = Some(0);
             }
         }
 
         // Reset viewports
         if self.state.num_viewports == 1 {
-            unsafe { gl.Viewport(0, 0, 0, 0) };
+            es20::wrapper::viewport(0, 0, 0, 0);
+            //深度设置【0，1】
+            es20::wrapper::depth_rangef(0.0, 1.0);
             unsafe { gl.DepthRange(0.0, 1.0) };
         } else if self.state.num_viewports > 1 {
+            panic!("queue: reset_state: gles20/30 don't support viewArray, please check info.queue_all() \
+                    func");
+            unimplemented!();
             // 16 viewports is a common limit set in drivers.
             let viewports: SmallVec<[[f32; 4]; 16]> =
                 (0..self.state.num_viewports)
@@ -277,53 +292,60 @@ impl CommandQueue {
                 (0..self.state.num_viewports)
                     .map(|_| [0.0, 0.0])
                     .collect();
-            unsafe { gl.ViewportArrayv(0, viewports.len() as i32, viewports.as_ptr() as *const _)};
-            unsafe { gl.DepthRangeArrayv(0, depth_ranges.len() as i32, depth_ranges.as_ptr() as *const _)};
+
+            //unsafe { gl.ViewportArrayv(0, viewports.len() as i32, viewports.as_ptr() as *const _)};
+            //unsafe { gl.DepthRangeArrayv(0, depth_ranges.len() as i32, depth_ranges.as_ptr() as *const _)};
         }
 
         // Reset scissors
         if self.state.num_scissors == 1 {
-            unsafe { gl.Scissor(0, 0, 0, 0) };
+            es20::wrapper::scissor(0, 0, 0, 0);
         } else if self.state.num_scissors > 1 {
+            panic!("queue: reset_state: gles20/30 don't support scissorsArray, please check info.queue_all() \
+                    func");
+            unimplemented!();
             // 16 viewports is a common limit set in drivers.
-            let scissors: SmallVec<[[i32; 4]; 16]> =
-                (0..self.state.num_scissors)
-                    .map(|_| [0, 0, 0, 0])
-                    .collect();
-            unsafe { gl.ScissorArrayv(0, scissors.len() as i32, scissors.as_ptr() as *const _)};
+           // let scissors: SmallVec<[[i32; 4]; 16]> =
+            //    (0..self.state.num_scissors)
+            //        .map(|_| [0, 0, 0, 0])
+            //        .collect();
+            //unsafe { gl.ScissorArrayv(0, scissors.len() as i32, scissors.as_ptr() as *const _)};
         }
     }
 
     fn process(&mut self, cmd: &com::Command, data_buf: &[u8]) {
+        let version = &self.share.gl_version;
         match *cmd {
             com::Command::BindIndexBuffer(buffer) => {
-                let gl = &self.share.context;
                 self.state.index_buffer = Some(buffer);
-                unsafe { gl.BindBuffer(gl::ELEMENT_ARRAY_BUFFER, buffer) };
+                es20::wrapper::bind_buffer(es20d::GL_ELEMENT_ARRAY_BUFFER, buffer);
+                //  unsafe { gl.BindBuffer(gl::ELEMENT_ARRAY_BUFFER, buffer) };
             }
 //          com::Command::BindVertexBuffers(_data_ptr) =>
             com::Command::Draw { primitive, ref vertices, ref instances } => {
-                let gl = &self.share.context;
                 let legacy = &self.share.legacy_features;
                 if instances == &(0u32..1) {
-                    unsafe {
-                        gl.DrawArrays(
-                            primitive,
-                            vertices.start as _,
-                            (vertices.end - vertices.start) as _,
-                        );
-                    }
+                    es20::wrapper::draw_arrays(primitive,  vertices.start as _,
+                                               (vertices.end - vertices.start) as _);
                 } else if legacy.contains(LegacyFeatures::DRAW_INSTANCED) {
                     if instances.start == 0 {
-                        unsafe {
-                            gl.DrawArraysInstanced(
-                                primitive,
-                                vertices.start as _,
-                                (vertices.end - vertices.start) as _,
-                                instances.end as _,
-                            );
+                        match version {
+                            GLES_VERSION::ES20 => {
+                                panic!("queue: process: gles20 don't support DrawArraysInstanced ,\
+                                one instance is fed would workd, \
+                                please check info.queue_all() func");
+                            },
+                            _ => unsafe {
+                                es30::ffi::glDrawArraysInstanced(primitive,
+                                                                 vertices.start as _,
+                                                                 (vertices.end - vertices.start) as _,
+                                                                 instances.end as _);
+                            }
                         }
                     } else if legacy.contains(LegacyFeatures::DRAW_INSTANCED_BASE) {
+                        panic!("queue: process: glesdon't support DRAW_INSTANCED_BASE, \
+                                please check info.queue_all() func");
+                        /*
                         unsafe {
                             gl.DrawArraysInstancedBaseInstance(
                                 primitive,
@@ -332,7 +354,7 @@ impl CommandQueue {
                                 (instances.end - instances.start) as _,
                                 instances.start as _,
                             );
-                        }
+                        }*/
                     } else {
                         error!("Instanced draw calls with non-zero base instance are not supported");
                     }
@@ -341,69 +363,71 @@ impl CommandQueue {
                 }
             }
             com::Command::DrawIndexed { primitive, index_type, index_count, index_buffer_offset, base_vertex, ref instances } => {
-                let gl = &self.share.context;
+                let version = &self.share.gl_version;
                 let legacy = &self.share.legacy_features;
-                let offset = index_buffer_offset as *const gl::types::GLvoid;
+                let offset = index_buffer_offset as *const es20d::GLvoid;
 
                 if instances == &(0u32..1) {
                     if base_vertex == 0 {
-                        unsafe {
-                            gl.DrawElements(
-                                primitive,
-                                index_count as _,
-                                index_type,
-                                offset,
-                            );
-                        }
+                        ///if the EBO hasn't been binded , please set offset as a pointer to indices;
+                        es20::wrapper::draw_elements(primitive, index_count as _,
+                                                     index_type, offset);
                     } else if legacy.contains(LegacyFeatures::DRAW_INDEXED_BASE) {
-                        unsafe {
-                            gl.DrawElementsBaseVertex(
-                                primitive,
-                                index_count as _,
-                                index_type,
-                                offset,
-                                base_vertex as _,
-                            );
+                        match version {
+                            GLES_VERSION::ES20 | GLES_VERSION::ES30 | GLES_VERSION::ES31 => {
+                                panic!("queue: process: gles20~31 don't support DRAW_INDEXED_BASE, \
+                                please check info.queue_all() func");
+                            },
+                            GLES_VERSION::ES32 => unsafe {
+                                es32::ffi::glDrawElementsBaseVertex(primitive,
+                                                                    index_count as _,
+                                                                    index_type,
+                                                                    offset,
+                                                                    base_vertex as _);
+                            }
                         }
                     } else {
                         error!("Base vertex with indexed drawing not supported");
                     }
                 } else if legacy.contains(LegacyFeatures::DRAW_INDEXED_INSTANCED) {
                     if base_vertex == 0 && instances.start == 0 {
-                        unsafe {
-                            gl.DrawElementsInstanced(
-                                primitive,
-                                index_count as _,
-                                index_type,
-                                offset,
-                                instances.end as _,
-                            );
+                        match version {
+                            GLES_VERSION::ES20 => {
+                                panic!("queue: process: gles20 don't support DRAW_INDEXED_INSTANCED, \
+                                please check info.queue_all() func");
+                            },
+                            GLES_VERSION::ES30 |
+                            GLES_VERSION::ES31 |
+                            GLES_VERSION::ES32 => unsafe {
+                                es30::ffi::glDrawElementsInstanced(
+                                    primitive,
+                                    index_count as _,
+                                    index_type as _,
+                                    offset,
+                                    instance.end as _);
+                            }
                         }
                     } else if instances.start == 0 && legacy.contains(LegacyFeatures::DRAW_INDEXED_INSTANCED_BASE_VERTEX) {
-                        unsafe {
-                            gl.DrawElementsInstancedBaseVertex(
-                                primitive,
-                                index_count as _,
-                                index_type,
-                                offset,
-                                instances.end as _,
-                                base_vertex as _,
-                            );
+                        match version {
+                            GLES_VERSION::ES20 | GLES_VERSION::ES30 | GLES_VERSION::ES31 => {
+                                panic!("queue: process: gles20~31 don't support DRAW_INDEXED_INSTANCED_BASE_VERTEX, \
+                                please check info.queue_all() func");
+                            },
+                            GLES_VERSION::ES32 => unsafe {
+                                es32::ffi::glDrawElementsInstancedBaseVertex(
+                                    primitive,
+                                    index_count as _,
+                                    index_type,
+                                    offset,
+                                    instances.end as _,
+                                    base_vertex as _);
+                            }
                         }
                     } else if instances.start == 0 {
                         error!("Base vertex with instanced indexed drawing is not supported");
                     } else if legacy.contains(LegacyFeatures::DRAW_INDEXED_INSTANCED_BASE) {
-                        unsafe {
-                            gl.DrawElementsInstancedBaseVertexBaseInstance(
-                                primitive,
-                                index_count as _,
-                                index_type,
-                                offset,
-                                (instances.end - instances.start) as _,
-                                base_vertex as _,
-                                instances.start as _,
-                            );
-                        }
+                        panic!("queue: process: gles20~32 don't support DRAW_INDEXED_INSTANCED_BASE_VERTEX, \
+                                please check info.queue_all() func");
                     } else {
                         error!("Instance bases with instanced indexed drawing is not supported");
                     }
@@ -415,22 +439,35 @@ impl CommandQueue {
                 // Capability support is given by which queue types will be exposed.
                 // If there is no compute support, this pattern should never be reached
                 // because no queue with compute capability can be created.
-                let gl = &self.share.context;
-                unsafe { gl.DispatchCompute(count[0], count[1], count[2]) };
+                match version {
+                    GLES_VERSION::ES20 | GLES_VERSION::ES30 => {
+                        panic!("queue: process: gles20~30 don't support Dispatch Operation, \
+                                please check info.queue_all() func")
+                    },
+                    GLES_VERSION::ES31 | GLES_VERSION::ES32 => unsafe {
+                        es31::ffi::glDispatchCompute(count[0],
+                                                     count[1],
+                                                     count[2]);
+                    }
+                }
             }
             com::Command::DispatchIndirect(buffer, offset) => {
                 // Capability support is given by which queue types will be exposed.
                 // If there is no compute support, this pattern should never be reached
                 // because no queue with compute capability can be created.
-                let gl = &self.share.context;
-                unsafe {
-                    gl.BindBuffer(gl::DRAW_INDIRECT_BUFFER, buffer);
-                    // TODO: possible integer conversion issue
-                    gl.DispatchComputeIndirect(offset as _);
+                match version {
+                    GLES_VERSION::ES20 | GLES_VERSION::ES30 => {
+                        panic!("queue: process: gles20~30 don't support Dispatch Operation, \
+                                please check info.queue_all() func")
+                    },
+                    GLES_VERSION::ES31 | GLES_VERSION::ES32 => unsafe {
+                        es20::wrapper::bind_buffer(es31d::GL_DRAW_INDIRECT_BUFFER, buffer);
+                        es31::ffi::glDispatchComputeIndirect(offset as _);
+                    }
                 }
             }
             com::Command::SetViewports { first_viewport, viewport_ptr, depth_range_ptr } => {
-                let gl = &self.share.context;
+                let version = &self.share.gl_version;
                 let viewports = Self::get::<[f32; 4]>(data_buf, viewport_ptr);
                 let depth_ranges = Self::get::<[f64; 2]>(data_buf, depth_range_ptr);
 
@@ -441,63 +478,116 @@ impl CommandQueue {
                 if num_viewports == 1 {
                     let view = viewports[0];
                     let depth_range  = depth_ranges[0];
-                    unsafe { gl.Viewport(view[0] as i32, view[1] as i32, view[2] as i32, view[3] as i32) };
-                    unsafe { gl.DepthRange(depth_range[0], depth_range[1]) };
+                    es20::wrapper::viewport(view[0] as i32, view[1] as i32,
+                                            view[2] as i32, view[3] as i32);
+                    es20::wrapper::depth_rangef(depth_range[0], depth_range[1]);
                 } else if num_viewports > 1 {
                     // Support for these functions is coupled with the support
                     // of multiple viewports.
-                    unsafe { gl.ViewportArrayv(first_viewport, num_viewports as i32, viewports.as_ptr() as *const _) };
-                    unsafe { gl.DepthRangeArrayv(first_viewport, num_viewports as i32, depth_ranges.as_ptr() as *const _) };
+                    //unsafe { gl.ViewportArrayv(first_viewport, num_viewports as i32, viewports.as_ptr() as *const _) };
+                    //unsafe { gl.DepthRangeArrayv(first_viewport, num_viewports as i32, depth_ranges.as_ptr() as *const _) };
+                    panic!("queue: process: gles20~32 don't support viewport array, \
+                                please check info.queue_all() func")
                 }
             }
             com::Command::SetScissors(first_scissor, data_ptr) => {
-                let gl = &self.share.context;
+                let version = &self.share.gl_version;
                 let scissors = Self::get::<[i32; 4]>(data_buf, data_ptr);
                 let num_scissors = scissors.len();
                 assert!(0 < num_scissors && num_scissors <= self.share.limits.max_viewports);
 
                 if num_scissors == 1 {
                     let scissor = scissors[0];
-                    unsafe { gl.Scissor(scissor[0], scissor[1], scissor[2], scissor[3]) };
+                    es20::wrapper::scissor(scissor[0], scissor[1],
+                                           scissor[2], scissor[3]);
                 } else {
                     // Support for this function is coupled with the support
                     // of multiple viewports.
-                    unsafe { gl.ScissorArrayv(first_scissor, num_scissors as i32, scissors.as_ptr() as *const _) };
+                    panic!("queue: process: gles20~32 don't support scissor array, \
+                                please check info.queue_all() func")
+                    //unsafe { gl.ScissorArrayv(first_scissor, num_scissors as i32, scissors.as_ptr() as *const _) };
                 }
             }
             com::Command::SetBlendColor(color) => {
-                state::set_blend_color(&self.share.context, color);
+                state::set_blend_color(version, color);
             }
-            com::Command::ClearBufferColorF(draw_buffer, cv) => unsafe {
-                self.share.context.ClearBufferfv(gl::COLOR, draw_buffer, cv.as_ptr());
+            com::Command::ClearBufferColorF(draw_buffer, cv) => {
+                match version {
+                    GLES_VERSION::ES20 => {
+                        panic!("queue: process: gles20 don't support clearBuffer operation, \
+                                please check info.queue_all() func")
+                    },
+                    GLES_VERSION::ES30 | GLES_VERSION::ES31 | GLES_VERSION::ES32 => unsafe {
+                        es30::ffi::glClearBufferfv(es30d::GL_COLOR,
+                                                   draw_buffer,
+                                                   cv.as_ptr());
+                    }
+                }
             }
-            com::Command::ClearBufferColorU(draw_buffer, cv) => unsafe {
-                self.share.context.ClearBufferuiv(gl::COLOR, draw_buffer, cv.as_ptr());
+            com::Command::ClearBufferColorU(draw_buffer, cv) => {
+                match version {
+                    GLES_VERSION::ES20 => {
+                        panic!("queue: process: gles20 don't support clearBuffer operation, \
+                                please check info.queue_all() func")
+                    },
+                    GLES_VERSION::ES30 | GLES_VERSION::ES31 | GLES_VERSION::ES32 => unsafe {
+                        es30::ffi::glClearBufferuiv(es30d::GL_COLOR,
+                                                   draw_buffer,
+                                                   cv.as_ptr());
+                    }
+                }
             }
-            com::Command::ClearBufferColorI(draw_buffer, cv) => unsafe {
-                self.share.context.ClearBufferiv(gl::COLOR, draw_buffer, cv.as_ptr());
+            com::Command::ClearBufferColorI(draw_buffer, cv) => {
+                match version {
+                    GLES_VERSION::ES20 => {
+                        panic!("queue: process: gles20 don't support clearBuffer operation, \
+                                please check info.queue_all() func")
+                    },
+                    GLES_VERSION::ES30 | GLES_VERSION::ES31 | GLES_VERSION::ES32 => unsafe {
+                        es30::ffi::glClearBufferiv(es30d::GL_COLOR,
+                                                    draw_buffer,
+                                                    cv.as_ptr());
+                    }
+                }
             }
-            com::Command::ClearBufferDepthStencil(depth, stencil) => unsafe {
-                let (target, depth, stencil) = match (depth, stencil) {
-                    (Some(depth), Some(stencil)) => (gl::DEPTH_STENCIL, depth, stencil),
-                    (Some(depth), None) => (gl::DEPTH, depth, 0),
-                    (None, Some(stencil)) => (gl::STENCIL, 0.0, stencil),
-                    _ => unreachable!(),
-                };
-
-                self.share.context.ClearBufferfi(target, 0, depth, stencil as _);
+            com::Command::ClearBufferDepthStencil(depth, stencil) => {
+                match version {
+                    GLES_VERSION::ES20 => {
+                        panic!("queue: process: gles20 don't support clearBuffer operation, \
+                                please check info.queue_all() func")
+                    },
+                    GLES_VERSION::ES30 | GLES_VERSION::ES31 | GLES_VERSION::ES32 =>  unsafe {
+                        let (target, depth, stencil) = match (depth, stencil) {
+                            (Some(depth), Some(stencil)) => (es30d::GL_DEPTH_STENCIL, depth, stencil),
+                            (Some(depth), None) => (es30d::GL_DEPTH, depth, 0),
+                            (None, Some(stencil)) => (es30d::GL_STENCIL, 0.0, stencil),
+                            _ => unreachable!(),
+                        };
+                        es30::ffi::glClearBufferfi(target,
+                                                   0,
+                                                   depth,
+                                                   stencil as _);
+                    }
+                }
             }
-            com::Command::DrawBuffers(draw_buffers) => unsafe {
-                let draw_buffers = Self::get::<gl::types::GLenum>(data_buf, draw_buffers);
-                self.share.context.DrawBuffers(
-                    draw_buffers.len() as _,
-                    draw_buffers.as_ptr(),
-                );
+            com::Command::DrawBuffers(draw_buffers) => {
+                let draw_buffers = Self::get::<es20d::GLenum>(data_buf, draw_buffers);
+                match version {
+                    GLES_VERSION::ES20 => {
+                        panic!("queue: process: gles20 don't support DrawBuffers operation, \
+                                please check info.queue_all() func")
+                    },
+                    GLES_VERSION::ES30 | GLES_VERSION::ES31 | GLES_VERSION::ES32 => unsafe {
+                        es30::ffi::glDrawBuffers(
+                            draw_buffers.len() as _,
+                            draw_buffers.as_ptr(),
+                        );
+                    }
+                }
             }
             com::Command::BindFrameBuffer(point, frame_buffer) => {
                 if self.share.private_caps.framebuffer {
-                    let gl = &self.share.context;
-                    unsafe { gl.BindFramebuffer(point, frame_buffer) };
+                    es20::wrapper::bind_framebuffer(point, frame_buffer);
                 } else if frame_buffer != 0 {
                     error!("Tried to bind FBO {} without FBO support!", frame_buffer);
                 }
@@ -506,54 +596,133 @@ impl CommandQueue {
                 self.bind_target(point, attachment, &view)
             }
             com::Command::SetDrawColorBuffers(num) => {
-                state::bind_draw_color_buffers(&self.share.context, num);
+                state::bind_draw_color_buffers(version, num);
             }
             com::Command::SetPatchSize(num) => unsafe {
-                self.share.context.PatchParameteri(gl::PATCH_VERTICES, num);
+                match version {
+                    GLES_VERSION::ES20 | GLES_VERSION::ES30 | GLES_VERSION::ES31 => {
+                        panic!("queue: process: gles20 don't support PatchParameteri operation, \
+                                please check info.queue_all() func")
+                    },
+                    GLES_VERSION::ES32 => unsafe {
+                        es32::ffi::glPatchParameteri(es32d::GL_PATCH_VERTICES, num);
+                    }
+                }
             }
             com::Command::BindProgram(program) => unsafe {
-                self.share.context.UseProgram(program);
+                es20::wrapper::use_program(program);
             }
             com::Command::BindBlendSlot(slot, ref blend) => {
-                state::bind_blend_slot(&self.share.context, slot, blend);
+                state::bind_blend_slot(version, slot, blend);
             }
-            com::Command::BindAttribute(ref attribute, handle, stride, function_type) => unsafe {
+            com::Command::BindAttribute(ref attribute, handle, stride, function_type) => {
                 use native::VertexAttribFunction::*;
 
                 let &native::AttributeDesc { location, size, format, offset, .. } = attribute;
                 let offset = offset as *const gl::types::GLvoid;
-                let gl = &self.share.context;
+                es20::wrapper::bind_buffer(es20d::GL_ARRAY_BUFFER, handle);
+                //gl.BindBuffer(gl::ARRAY_BUFFER, handle);
 
-                gl.BindBuffer(gl::ARRAY_BUFFER, handle);
-
-                match function_type {
-                    Float => gl.VertexAttribPointer(location, size, format, gl::FALSE, stride, offset),
-                    Integer => gl.VertexAttribIPointer(location, size, format, stride, offset),
-                    Double => gl.VertexAttribLPointer(location, size, format, stride, offset),
+                match version {
+                    GLES_VERSION::ES20 => {
+                        match function_type {
+                            Float | Integer => {
+                                es20::wrapper::vertex_attrib_pointer(
+                                    location,
+                                    size as _,
+                                    format,
+                                    es20d::GL_FALSE,
+                                    stride as _,
+                                    offset);
+                            },
+                            Double => {
+                                panic!("queue: process: gles don't support double data type, \
+                                please check info.queue_all() func");
+                            }
+                        }
+                    },
+                    _ => {
+                        match function_type {
+                            Float => {
+                                es20::wrapper::vertex_attrib_pointer(
+                                    location,
+                                    size as _,
+                                    format,
+                                    es20d::GL_FALSE,
+                                    stride as _,
+                                    offset);
+                            },
+                            Integer => unsafe {
+                                es30::ffi::glVertexAttribIPointer(
+                                    location,
+                                    size as _,
+                                    format,
+                                    stride as _,
+                                    offset);
+                            },
+                            Double => {
+                                panic!("queue: process: gles don't support double data type, \
+                                please check info.queue_all() func")
+                            }
+                        }
+                    }
                 }
-
-                gl.EnableVertexAttribArray(location);
-                gl.BindBuffer(gl::ARRAY_BUFFER, 0);
+                es20::wrapper::enable_vertex_attrib_array(location);
+                es20::wrapper::bind_buffer(es20d::GL_ARRAY_BUFFER, 0);
             }
             /*
             com::Command::UnbindAttribute(ref attribute) => unsafe {
                 self.share.context.DisableVertexAttribArray(attribute.location);
             }*/
             com::Command::CopyBufferToBuffer(src, dst, ref r) => unsafe {
-                let gl = &self.share.context;
-                gl.BindBuffer(gl::PIXEL_UNPACK_BUFFER, src);
-                gl.BindBuffer(gl::PIXEL_PACK_BUFFER, dst);
-                gl.CopyBufferSubData(
-                    gl::PIXEL_UNPACK_BUFFER, gl::PIXEL_PACK_BUFFER,
-                    r.src as _, r.dst as _, r.size as _,
-                );
-                gl.BindBuffer(gl::PIXEL_UNPACK_BUFFER, 0);
-                gl.BindBuffer(gl::PIXEL_PACK_BUFFER, 0);
+                match version {
+                    ///feiper: es20 don't support buffer upload/down stream
+                    GLES_VERSION::ES20 => {
+                        panic!("queue: process: gles don't support CopyBufferToBuffer type, \
+                                please check info.queue_all() func")
+                    },
+                    GLES_VERSION::ES30 | GLES_VERSION::ES31 | GLES_VERSION::ES32 => unsafe {
+                        es20::wrapper::bind_buffer(es30d::GL_PIXEL_UNPACK_BUFFER, src);
+                        es20::wrapper::bind_buffer(es30d::GL_PIXEL_PACK_BUFFER, dst);
+
+                        es30::ffi::glCopyBufferSubData(
+                            es30d::GL_PIXEL_UNPACK_BUFFER,
+                            es30d::GL_PIXEL_PACK_BUFFER,
+                            r.src as _,
+                            r.dst as _,
+                            r.size as _);
+
+                        es20::wrapper::bind_buffer(es30d::GL_PIXEL_UNPACK_BUFFER, 0);
+                        es20::wrapper::bind_buffer(es30d::GL_PIXEL_PACK_BUFFER, 0);
+                    }
+                }
             }
             com::Command::CopyBufferToTexture(buffer, texture, ref r) => unsafe {
                 // TODO: Fix format and active texture
                 assert_eq!(r.image_offset.z, 0);
-                let gl = &self.share.context;
+                match version {
+                    ///feiper: es20 don't support buffer upload/down stream
+                    GLES_VERSION::ES20 => {
+                        panic!("queue: process: gles don't support CopyBufferToBuffer type, \
+                                please check info.queue_all() func")
+                    },
+                    GLES_VERSION::ES30 | GLES_VERSION::ES31 | GLES_VERSION::ES32 => unsafe {
+                        es20::wrapper::bind_buffer(es30d::GL_PIXEL_UNPACK_BUFFER, src);
+                        es20::wrapper::bind_buffer(es30d::GL_PIXEL_PACK_BUFFER, dst);
+
+                        es30::ffi::glCopyBufferSubData(
+                            es30d::GL_PIXEL_UNPACK_BUFFER,
+                            es30d::PIXEL_PACK_BUFFER,
+                            r.src as _,
+                            r.dst as _,
+                            r.size as _);
+
+                        es20::wrapper::bind_buffer(es30d::GL_PIXEL_UNPACK_BUFFER, 0);
+                        es20::wrapper::bind_buffer(es30d::GL_PIXEL_PACK_BUFFER, 0);
+                    }
+                }
+
+
                 gl.ActiveTexture(gl::TEXTURE0);
                 gl.BindBuffer(gl::PIXEL_UNPACK_BUFFER, buffer);
                 gl.BindTexture(gl::TEXTURE_2D, texture);

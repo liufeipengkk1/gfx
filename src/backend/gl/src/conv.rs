@@ -148,7 +148,8 @@ pub fn format_to_gl_format(version: &GLES_VERSION, format: Format) -> Option<(es
         R16Float => {
             match version {
                 GLES_VERSION::ES20=>{
-
+                    info!("conv: format_to_gl_format: half float is not supported by es20");
+                    unimplemented!()
                 },
                 _ => {
                     (1, es30d::GL_HALF_FLOAT, Float)
